@@ -1,0 +1,22 @@
+{
+  "name": "git-loader",
+  "version": "0.0.0",
+  "description": "A boot-loader for a local-first web backed by Git.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "serve"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/folk-js/git-loader.git"
+  },
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/folk-js/git-loader/issues"
+  },
+  "homepage": "https://github.com/folk-js/git-loader#readme",
+  "dependencies": {
+    "serve": "^14.2.4"
+  }
+}
