@@ -4,7 +4,7 @@
   "description": "A boot-loader for a local-first web backed by Git.",
   "main": "main.js",
   "scripts": {
-    "dev": "serve"
+    "dev": "serve src -p 3001"
   },
   "repository": {
     "type": "git",

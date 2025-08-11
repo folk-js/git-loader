@@ -1,8 +1,8 @@
-import FS from 'https://esm.sh/@isomorphic-git/lightning-fs';
-import { Buffer } from 'https://esm.sh/buffer';
-import { fileTypeFromBuffer } from 'https://esm.sh/file-type';
-import * as git from 'https://esm.sh/isomorphic-git';
-import http from 'https://esm.sh/isomorphic-git/http/web';
+import FS from 'https://esm.sh/@isomorphic-git/lightning-fs?standalone';
+import { Buffer } from 'https://esm.sh/buffer?standalone';
+import mime from 'https://esm.sh/mime?standalone';
+import * as git from 'https://esm.sh/isomorphic-git?standalone';
+import http from 'https://esm.sh/isomorphic-git/http/web?standalone';
 
 // Need to polyfill buffer
 self.Buffer = Buffer;
@@ -34,7 +34,11 @@ async function clearOldCaches() {
 }
 
 async function cloneRepo(dir, url) {
-  if (await exists(`${dir}/.git`)) return;
+  if (await exists(`${dir}/.git`)) {
+    console.log('Repo already cloned.');
+    console.log(await fsp.readdir(dir));
+    return;
+  }
 
   await fsp.mkdir(dir);
   await git.clone({ fs, http, dir, url, corsProxy: 'https://cors.isomorphic-git.org' });
@@ -51,30 +55,46 @@ self.addEventListener('activate', async (event) => {
   event.waitUntil(clearOldCaches().then(() => self.clients.claim()));
 });
 
-self.addEventListener('fetch', async (event) => {
-  const url = new URL(event.request.url);
-
-  if (url.origin !== self.location.origin) return;
-
-  console.log(url);
-
+async function getResponse(url) {
   try {
-    const file = await fsp.readFile(url.pathname);
-    const contentType = await fileTypeFromBuffer(file).then((fileType) => fileType?.mime);
-
-    event.respondWith(
-      new Response(file, {
-        headers: { 'Content-Type': contentType },
-      })
-    );
+    const fsPath = DIR + url.pathname;
+    console.log('intercepting file request', fsPath);
+    const file = await fsp.readFile(DIR + url.pathname);
+    const contentType = mime.getType(url.pathname);
+    return new Response(file, {
+      headers: { 'Content-Type': contentType },
+    });
   } catch (error) {
     console.error(error);
 
-    event.respondWith(
-      new Response(`The path couldn't be resolved to a valid document.`, {
-        status: 500,
+    if (error instanceof Error && error.message.includes('ENOENT')) {
+      return new Response(`Not found`, {
+        status: 404,
         headers: { 'Content-Type': 'text/plain' },
-      })
-    );
+      });
+    }
+
+    return new Response(`Internal Server Error`, {
+      status: 500,
+      headers: { 'Content-Type': 'text/plain' },
+    });
   }
+}
+
+self.addEventListener('fetch', async (event) => {
+  const url = new URL(event.request.url);
+
+  console.log(url);
+
+  // Dont intercept non-origin requests
+  if (url.origin !== self.location.origin) return;
+
+  // The URL is a directory
+  if (!url.pathname.includes('.')) url.pathname += '/';
+
+  // The URL is a directory aliasing it's index.html file
+  if (url.pathname.endsWith('/')) url.pathname += 'index.html';
+
+  const r = getResponse(url);
+  event.respondWith(r);
 });
