@@ -55,46 +55,148 @@ self.addEventListener('activate', async (event) => {
   event.waitUntil(clearOldCaches().then(() => self.clients.claim()));
 });
 
-async function getResponse(url) {
+async function getResponse(url, request) {
   try {
     const fsPath = DIR + url.pathname;
-    console.log('intercepting file request', fsPath);
-    const file = await fsp.readFile(DIR + url.pathname);
-    const contentType = mime.getType(url.pathname);
-    return new Response(file, {
-      headers: { 'Content-Type': contentType },
-    });
+
+    if (request.method === 'GET') {
+      console.log('intercepting file request', fsPath);
+      const file = await fsp.readFile(fsPath);
+      const contentType = mime.getType(url.pathname);
+
+      return new Response(file, {
+        headers: { 'Content-Type': contentType },
+      });
+    } else if (request.method === 'POST') {
+      const body = new Uint8Array(await request.arrayBuffer());
+      await fsp.writeFile(fsPath, body);
+      return new Response();
+    }
   } catch (error) {
     console.error(error);
 
     if (error instanceof Error && error.message.includes('ENOENT')) {
-      return new Response(`Not found`, {
+      return new Response(null, {
         status: 404,
-        headers: { 'Content-Type': 'text/plain' },
       });
     }
 
-    return new Response(`Internal Server Error`, {
+    return new Response(null, {
       status: 500,
-      headers: { 'Content-Type': 'text/plain' },
+    });
+  }
+}
+
+function getJSONResponse(json) {
+  return new Response(JSON.stringify(json), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+async function getGitResponse(path, url, request) {
+  try {
+    switch (path) {
+      case '/branches': {
+        if (request.method === 'GET') {
+          const remote = url.searchParams.get('remote') ?? undefined;
+          const branches = await git.listBranches({ fs, dir: DIR, remote });
+          return getJSONResponse(branches);
+        }
+      }
+      case '/branch': {
+        if (request.method === 'POST') {
+          const ref = url.searchParams.get('name');
+
+          if (ref === undefined) {
+            return new Response('"name" not included as a query param', {
+              status: '400',
+            });
+          }
+
+          await git.branch({ fs, dir: DIR, ref });
+          return new Response();
+        }
+      }
+      case '/current-branch': {
+        if (request.method === 'GET') {
+          let branch = await git.currentBranch({
+            fs,
+            dir: DIR,
+          });
+          return getJSONResponse(branch);
+        }
+      }
+      case '/log': {
+        if (request.method === 'GET') {
+          const depth = url.searchParams.get('depth') || undefined;
+          let commits = await git.log({
+            fs,
+            dir: DIR,
+            depth,
+            ref: 'main',
+          });
+          return getJSONResponse(commits);
+        }
+      }
+      case '/status': {
+        if (request.method === 'GET') {
+          const filepath = url.searchParams.get('filePath');
+
+          if (filepath === undefined) {
+            return new Response('"filePath" not included as a query param', {
+              status: '400',
+            });
+          }
+          const status = await git.status({ fs, dir: DIR, filepath });
+          return getJSONResponse(status);
+        }
+      }
+      case '/restore': {
+        if (request.method === 'POST') {
+          await git.checkout({
+            fs,
+            dir: DIR,
+            force: true,
+          });
+          return new Response();
+        }
+      }
+      default:
+        return new Response(null, {
+          status: 404,
+        });
+    }
+  } catch (error) {
+    console.log(error);
+    return new Response(null, {
+      status: 500,
     });
   }
 }
 
 self.addEventListener('fetch', async (event) => {
+  const request = event.request;
   const url = new URL(event.request.url);
 
-  console.log(url);
+  console.log('original URL', url.href);
 
   // Dont intercept non-origin requests
   if (url.origin !== self.location.origin) return;
 
+  if (url.pathname.startsWith('/.git')) {
+    const path = url.pathname.replace('/.git', '');
+    const r = getGitResponse(path, url, request);
+    event.respondWith(r);
+    return;
+  }
+
   // The URL is a directory
-  if (!url.pathname.includes('.')) url.pathname += '/';
+  if (!url.pathname.includes('.') && !url.pathname.endsWith('/')) url.pathname += '/';
 
   // The URL is a directory aliasing it's index.html file
   if (url.pathname.endsWith('/')) url.pathname += 'index.html';
 
-  const r = getResponse(url);
+  // console.log('updated URL', url.href);
+  const r = getResponse(url, request);
   event.respondWith(r);
 });
